@@ -122,3 +122,161 @@ a short JWT TTL (a few minutes). The callback port is configurable via
 ├── scratchpad/                     # research + decision log (00–07)
 └── reference_data/                 # original reference zip (read-only)
 ```
+
+---
+
+## Understanding the auth: OAuth 2.1, PKCE, and DCR
+
+This section explains *why* the agent is wired the way it is — useful background if you want
+to extend it or apply the same pattern to other MCP servers.
+
+### OAuth 2.1 — the foundation
+
+OAuth 2.1 is not a new protocol. It is OAuth 2.0 with the unsafe parts removed and the best
+practices made mandatory:
+
+- **Implicit flow** — removed (tokens in redirect URLs are dangerous)
+- **Password grant** — removed (agents must never hold user passwords)
+- **PKCE** — mandatory for all authorization code flows (see below)
+- **Redirect URIs** — must match exactly, no wildcards
+
+The core question OAuth answers: *"How does an app act on behalf of a user without ever knowing
+their password?"* The answer is a time-limited access token issued only after the user explicitly
+consents.
+
+---
+
+### PKCE — Proof Key for Code Exchange (RFC 7636)
+
+**The problem.** On desktop/mobile apps, multiple processes can register the same local callback
+URL. A malicious process could intercept the authorization code that the auth server sends back
+after the user logs in and redeem it for a token before the legitimate agent does.
+
+**The fix.** Bind the authorization code to the agent instance that requested it, using a
+one-time secret that is never transmitted directly.
+
+```
+Step 1 — Agent generates a random secret (never sent over the wire):
+         code_verifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+
+Step 2 — Agent hashes it (SHA-256) and sends ONLY the hash to the auth server:
+         code_challenge = BASE64URL(SHA256(code_verifier))
+                        = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+Step 3 — User logs in and consents. Auth server stores the challenge, returns a code.
+
+Step 4 — Agent sends the VERIFIER (original secret) + code to the token endpoint.
+         Auth server recomputes SHA256(verifier) and checks it matches.
+         A thief who intercepted the code has no verifier → cannot redeem the code.
+```
+
+In our run you can see the challenge in the authorization URL:
+```
+...&code_challenge=i-tfkHjhahkkabfewRor6WxU5fCvz7qoKpb1vQoiNC4&code_challenge_method=S256
+```
+
+**PKCE = the authorization code is cryptographically bound to the agent instance that generated
+it.** No client secret required — safe for apps that cannot keep secrets (mobile, desktop, CLI).
+
+---
+
+### DCR — Dynamic Client Registration (RFC 7591)
+
+**The problem.** Traditional OAuth requires you to pre-register your app at a developer portal
+(e.g. Atlassian Developer Console), receive a static `client_id` + `client_secret`, and embed
+them in your code. That works for a single-deployment web app. It breaks for AI agents:
+
+- Each user runs their own agent instance — you cannot pre-register thousands of them.
+- For Atlassian MCP specifically: statically registered clients are **rejected at tool-call
+  time**. DCR is the only supported path.
+
+**How it works.** The agent registers itself programmatically at first boot:
+
+```
+POST https://mcp.atlassian.com/oauth/register
+{
+  "client_name": "atlassian-mcp-agent",
+  "redirect_uris": ["http://127.0.0.1:3030/callback"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "none"    ← public client, no secret needed
+}
+
+← Response:
+{
+  "client_id": "AMi-ldd7VfjPuu8i"         ← unique per deployment
+}
+```
+
+The `client_id` is saved to `~/.atlassian-mcp/client.json` and reused on every subsequent run.
+The registration step is skipped from then on.
+
+You can see the DCR-issued `client_id` in the live authorization URL:
+```
+https://mcp.atlassian.com/v1/authorize?...&client_id=AMi-ldd7VfjPuu8i&...
+```
+
+**DCR = the agent registers itself at runtime. No developer portal, no hardcoded secrets.**
+
+---
+
+### Is this the future for AI agents?
+
+**Yes — for MCP-connected agents it is already the standard today.**
+
+The [MCP specification (2025-11-25)](https://spec.modelcontextprotocol.io/specification/2025-11-25/basic/authentication/)
+mandates OAuth 2.1 + PKCE + DCR as the required auth layer for remote MCP servers. The reasons
+align exactly with what makes agents different from traditional web apps:
+
+| Problem | Solution |
+|---|---|
+| User must grant permission, not the developer | OAuth user consent flow |
+| Agent is a public client (no safe secret storage) | PKCE replaces `client_secret` |
+| Agent cannot be pre-registered at every MCP server | DCR — self-registers at runtime |
+| Tokens must be short-lived and scoped | OAuth access tokens (~1 h, minimal scopes) |
+
+---
+
+### M2M — Client Credentials for autonomous multi-agent orchestration
+
+The user-delegated flow above requires a human to open a browser and consent. For fully
+autonomous agents — an orchestrator calling sub-agents with no human in the loop — the pattern
+shifts to **Client Credentials**:
+
+```
+User-delegated (what we built):
+  User → [browser consent] → Agent gets token scoped to that user
+
+Client Credentials (M2M / service account):
+  Orchestrator → [no browser, direct token request] → Sub-agent gets service token
+```
+
+For multi-agent *chains* (orchestrator → sub-agent → tool), two additional RFCs are relevant:
+
+- **Token Exchange (RFC 8693):** an orchestrator exchanges its user-delegated token for a
+  narrower-scoped token for a sub-agent. The full delegation chain is auditable.
+- **JWT Bearer Grant (RFC 7523):** an agent signs a JWT with its own private key and presents
+  it directly to the token endpoint — no browser redirect, no user interaction.
+
+```
+                    USER-ENABLED                    AUTONOMOUS M2M
+                   (human consents)              (no human in loop)
+
+Single agent:    OAuth 2.1 + PKCE + DCR      Client Credentials + DCR
+                 ← what Phase 1 builds →
+
+Multi-agent      Token Exchange               JWT Bearer / mTLS
+  chain:         (RFC 8693)                   + Token Exchange for delegation
+```
+
+**What makes this a sound foundation for AI agents:**
+
+1. **Tokens are short-lived** — a compromised token has a small blast radius (~1 h)
+2. **Scopes are minimal** — agents can only do what the user explicitly granted
+3. **No secrets in code** — DCR + PKCE means there is no `client_secret` to leak or rotate
+4. **Audit trail** — every token issuance is logged at the auth server with the agent's identity
+5. **Revocable** — the user can revoke the agent's access at any time from their Atlassian
+   account settings
+
+The fact that Atlassian issued a **refresh token** in the Phase 1 live run (contrary to earlier
+documentation) signals that the ecosystem is already moving toward long-lived agent sessions —
+acknowledging that forcing re-authentication every hour is impractical for production agents.
