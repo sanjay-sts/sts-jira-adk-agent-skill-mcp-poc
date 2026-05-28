@@ -26,7 +26,6 @@ import asyncio
 import logging
 import os
 import pathlib
-import re
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -40,6 +39,7 @@ from mcp.client.auth import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 from pydantic import AnyUrl
 
+from .logging_redaction import install_log_redaction
 from .storage import FileTokenStorage
 
 logger = logging.getLogger("atlassian_mcp_agent")
@@ -81,42 +81,9 @@ PHASE_1_TOOL_FILTER = [
 ]
 
 
-# ───────────────────────── Logging: redact bearer tokens (§5.7) ─────────────────
-class _RedactAuthFilter(logging.Filter):
-    """Scrub Authorization headers / bearer tokens from any log record.
-
-    Defense-in-depth: we never log tokens ourselves, and httpx/httpcore are pinned
-    to WARNING below, but this guarantees a stray DEBUG line can't leak a token.
-    """
-
-    _AUTH_KV = re.compile(r'(?i)(authorization["\']?\s*[:=]\s*["\']?)([^"\'\s,}]+)')
-    _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*")
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            msg = record.getMessage()
-        except Exception:  # pragma: no cover - never let logging crash the agent
-            return True
-        redacted = self._AUTH_KV.sub(r"\1***REDACTED***", msg)
-        redacted = self._BEARER.sub("Bearer ***REDACTED***", redacted)
-        if redacted != msg:
-            record.msg = redacted
-            record.args = None
-        return True
-
-
-def _install_log_redaction() -> None:
-    _filter = _RedactAuthFilter()
-    for name in ("httpx", "httpcore", "atlassian_mcp_agent"):
-        lg = logging.getLogger(name)
-        lg.addFilter(_filter)
-    # Keep HTTP client wire logging quiet so headers never hit the logs.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
-
-
-_install_log_redaction()
+# Redact Authorization headers / bearer tokens from logs (VISION §5.7). The filter lives in
+# logging_redaction.py so it can be unit-tested without importing google-adk.
+install_log_redaction()
 
 
 # Token storage (FileTokenStorage) lives in storage.py so the unit test can import it
@@ -124,23 +91,54 @@ _install_log_redaction()
 
 
 # ───────────────────────── Browser callback plumbing ───────────────────────────
-_callback_future: asyncio.Future[tuple[str, str | None]] | None = None
+# Single-user Phase 1: one in-flight OAuth callback at a time, tracked by a module future.
+# (Phase 2 / multi-user will need a per-flow store keyed by `state`.)
+_CallbackResult = tuple[str, str | None]
+_callback_future: asyncio.Future[_CallbackResult] | None = None
+
+
+def _deliver(
+    future: asyncio.Future[_CallbackResult],
+    result: _CallbackResult | None,
+    error: str | None,
+) -> None:
+    """Resolve or reject the callback future (called on the loop thread, guarded once)."""
+    if future.done():
+        return
+    if error is not None:
+        future.set_exception(RuntimeError(error))
+    elif result is not None:
+        future.set_result(result)
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # http.server API uses this exact (mixedCase) method name
-        q = parse_qs(urlparse(self.path).query)
-        assert _callback_future is not None
-        loop = _callback_future.get_loop()
-        loop.call_soon_threadsafe(
-            _callback_future.set_result,
-            (q["code"][0], q.get("state", [None])[0]),
-        )
+        params = parse_qs(urlparse(self.path).query)
+        future = _callback_future
+        if future is None:  # no flow in progress — shouldn't happen
+            self.send_response(503)
+            self.end_headers()
+            return
+        loop = future.get_loop()
+        if "code" in params:
+            result = (params["code"][0], params.get("state", [None])[0])
+            loop.call_soon_threadsafe(_deliver, future, result, None)
+            body = b"Auth complete - you can close this tab and return to the terminal."
+        else:
+            # User denied consent, or Atlassian returned ?error=... Fail fast instead of
+            # leaving the agent hanging until the request timeout.
+            error = params.get("error", ["unknown"])[0]
+            detail = params.get("error_description", [""])[0]
+            loop.call_soon_threadsafe(
+                _deliver,
+                future,
+                None,
+                f"OAuth callback returned no code (error={error}: {detail})",
+            )
+            body = b"Authorization failed - check the terminal."
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(
-            b"Auth complete - you can close this tab and return to the terminal."
-        )
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args: object) -> None:
         pass  # silence noisy stderr (param names match BaseHTTPRequestHandler's override)
@@ -151,7 +149,7 @@ async def redirect_handler(url: str) -> None:
     webbrowser.open(url)
 
 
-async def callback_handler() -> tuple[str, str | None]:
+async def callback_handler() -> _CallbackResult:
     global _callback_future
     _callback_future = asyncio.get_running_loop().create_future()
     srv = HTTPServer(("127.0.0.1", OAUTH_CALLBACK_PORT), _CallbackHandler)

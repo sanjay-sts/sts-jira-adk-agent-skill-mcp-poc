@@ -30,10 +30,14 @@ class FileTokenStorage(TokenStorage):
     """Persist the OAuth token and DCR client registration as JSON (0600 on POSIX)."""
 
     def __init__(self, root: str = "~/.atlassian-mcp") -> None:
+        # No filesystem side effects on construction; the directory is created lazily on
+        # the first write (so merely importing the agent doesn't touch disk).
         self.dir = pathlib.Path(os.path.expanduser(root))
-        self.dir.mkdir(parents=True, exist_ok=True)
         self.t_file = self.dir / "token.json"
         self.c_file = self.dir / "client.json"
+
+    def _ensure_dir(self) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
 
     async def get_tokens(self) -> OAuthToken | None:
         if self.t_file.exists():
@@ -48,6 +52,7 @@ class FileTokenStorage(TokenStorage):
                 getattr(tokens, "scope", None),
                 bool(getattr(tokens, "refresh_token", None)),
             )
+        self._ensure_dir()
         self.t_file.write_text(tokens.model_dump_json())
         chmod_600(self.t_file)
 
@@ -57,5 +62,6 @@ class FileTokenStorage(TokenStorage):
         return None
 
     async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+        self._ensure_dir()
         self.c_file.write_text(client_info.model_dump_json())
         chmod_600(self.c_file)
