@@ -33,8 +33,11 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from google.adk.agents import Agent
-from google.adk.models.lite_llm import LiteLlm
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.lite_llm import LiteLlm, LiteLLMClient
+from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
+from litellm import CustomStreamWrapper, ModelResponse
 from mcp.client.auth import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 from pydantic import AnyUrl
@@ -239,9 +242,10 @@ tool for natural-language questions; fall back to JQL/CQL only when the user
 uses precise query language, asks for specific filters, or when the content
 in question was created in the last hour (Rovo Search has indexing lag).
 
-When an access token expires (~1 hour, no refresh token is granted), a tool call
-will fail with a 401 — tell the user they need to re-authenticate rather than
-retrying in a loop.
+Access tokens are short-lived (~1 hour). A refresh token is normally issued, so the
+OAuth client refreshes the access token automatically — no browser prompt needed. If a
+tool call still fails with a 401 (the refresh token has expired or the grant was
+revoked), tell the user they need to re-authenticate rather than retrying in a loop.
 
 ═══════════════════════════════════════════════════════════════════════════
 OPERATIONAL GUIDE (loaded from SKILL.md)
@@ -254,7 +258,85 @@ OPERATIONAL GUIDE (loaded from SKILL.md)
 # AWS creds come from the standard provider chain: env vars, then AWS_PROFILE
 # (e.g. "mainadmin" with an active SSO session), then instance metadata.
 # Region from AWS_REGION (default us-east-1).
-model = LiteLlm(model=BEDROCK_MODEL_ID)
+#
+# Prompt caching (DEC-17): the static prefix — the 8 tool schemas + the ~12 KB SKILL.md
+# system prompt — is otherwise re-billed at full input price on EVERY model call in the
+# agentic loop, which is where ADK burns tokens. We hand LiteLLM a cache_control injection
+# point on the system message; LiteLLM injects an ephemeral cache_control marker and
+# translates it to Bedrock's native cachePoint. Bedrock chains tools -> system, so a single
+# checkpoint on `system` covers both. Sonnet 4.6: 1,024-token min (the prefix clears it),
+# 5-minute TTL only — so we deliberately set no `ttl` (avoids the open Bedrock ttl bugs).
+# The kwarg rides ADK's LiteLlm **kwargs pass-through (_additional_args -> acompletion).
+# Cost: written once at ~1.25x, re-read at ~0.1x thereafter. Hit rate is observable via the
+# after_model_callback below (cached_content_token_count).
+
+
+class _CacheControlLiteLLMClient(LiteLLMClient):
+    """Fallback path: attach an ephemeral Anthropic ``cache_control`` marker to the system
+    message at the acompletion boundary, which LiteLLM translates to Bedrock's cachePoint.
+
+    Used only when ``ATLASSIAN_CACHE_FALLBACK=1`` — the ``cache_control_injection_points``
+    kwarg is the primary path. This has to live here (a LiteLLMClient subclass) rather than in
+    a ``before_model_callback``: ADK converts the genai system instruction (a plain string)
+    into the OpenAI message format *inside* ``LiteLlm``, after callbacks have already run, so
+    the only place left to tag it is just before the request reaches litellm.
+    """
+
+    async def acompletion(
+        self,
+        model: str,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None,
+        **kwargs: object,
+    ) -> ModelResponse | CustomStreamWrapper:
+        for msg in messages:
+            content = msg.get("content")
+            if msg.get("role") == "system" and isinstance(content, str):
+                msg["content"] = [
+                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                ]
+                break
+        # super().acompletion is an untyped third-party method (ADK leaves its params
+        # unannotated); the call is correct, so silence the partial-unknown warning.
+        return await super().acompletion(  # pyright: ignore[reportUnknownMemberType]
+            model, messages, tools, **kwargs
+        )
+
+
+# Primary path = the kwarg; fallback = the subclass above. Flip ATLASSIAN_CACHE_FALLBACK=1
+# (no code change) if the token-usage log shows cached(read) stuck at 0.
+if os.environ.get("ATLASSIAN_CACHE_FALLBACK", "0") == "1":
+    logger.info("Prompt-cache fallback ON: cache_control injected via LiteLLMClient subclass.")
+    model = LiteLlm(model=BEDROCK_MODEL_ID, llm_client=_CacheControlLiteLLMClient())
+else:
+    model = LiteLlm(
+        model=BEDROCK_MODEL_ID,
+        cache_control_injection_points=[{"location": "message", "role": "system"}],
+    )
+
+
+def _log_token_usage(
+    callback_context: CallbackContext,
+    llm_response: LlmResponse,
+) -> LlmResponse | None:
+    """Log per-call token usage so prompt-cache hit rates are observable in the smoke test.
+
+    ``cached_content_token_count`` is ADK's surfaced view of Bedrock's cacheReadInputTokens
+    (billed at ~0.1x). Expect ~0 on the first call (cache write) and a jump to roughly the
+    static-prefix size on every later call in the loop. If it stays 0, caching isn't engaging
+    — re-check the cache_control_injection_points wiring and the litellm version. Returns None
+    (we observe usage, never mutate the response).
+    """
+    del callback_context  # required by the ADK callback signature; unused here
+    usage = getattr(llm_response, "usage_metadata", None)
+    if usage is not None:
+        logger.info(
+            "Token usage - prompt: %s, cached(read): %s, output: %s",
+            getattr(usage, "prompt_token_count", None),
+            getattr(usage, "cached_content_token_count", None),
+            getattr(usage, "candidates_token_count", None),
+        )
+    return None
 
 
 root_agent = Agent(
@@ -262,4 +344,5 @@ root_agent = Agent(
     name="atlassian_mcp_agent",
     instruction=_AGENT_INSTRUCTION,
     tools=[toolset],
+    after_model_callback=_log_token_usage,
 )

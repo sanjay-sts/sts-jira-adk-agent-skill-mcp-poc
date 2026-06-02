@@ -150,7 +150,7 @@ Default rule: **read in `markdown`, write in `html`**.
 
 ## Pitfalls and gotchas
 
-1. **No `offline_access` scope is granted.** No refresh token. When the access token expires (~1 hour), the next call fails with 401 and you'll need to re-authenticate. Surface this clearly when it happens — don't loop retrying.
+1. **Access tokens are short-lived (~1 hour).** A refresh token is normally issued (observed in the Phase 1 live run, even though `offline_access` isn't in the granted scope set), so the OAuth client refreshes the access token automatically — no browser prompt. If a call still returns 401 (refresh token expired or the grant was revoked), surface it clearly and tell the user to re-authenticate — don't loop retrying.
 2. **`write:sprint:jira-software` is NOT granted.** If you try to `transitionJiraIssue` on a Scrum project where the transition screen includes the Sprint field, it will fail with a permission error referencing the Sprint field. There's no client-side workaround — the user has to do the transition in the Jira UI, or you have to remove the Sprint field from the transition screen.
 3. **JSM tools are not available via OAuth** (only via API token). If the user asks about service desk tickets, tell them this MCP connection doesn't expose JSM.
 4. **`createConfluenceInlineComment` requires fetching the page first** to count text occurrences. Don't skip the read step.

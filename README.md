@@ -95,7 +95,7 @@ a short JWT TTL (a few minutes). The callback port is configurable via
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| 401 on every tool call | Access token expired (~1h, no refresh token) | Delete `~/.atlassian-mcp/token.json`, re-run |
+| 401 on every tool call | Access + refresh token both expired/revoked (the SDK auto-refreshes while the refresh token is valid) | Delete `~/.atlassian-mcp/token.json`, re-run |
 | "MCP server not found" / auth loops | DCR client_id mismatch | Delete `~/.atlassian-mcp/client.json`, re-run |
 | Browser opens to "Something went wrong" | Second consent's JWT expired | Restart the connection, click through faster |
 | Agent can't see a page you just created | Rovo indexing lag (minutes–hours) | Ask via CQL (`searchConfluenceUsingCql`) |

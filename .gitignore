@@ -10,6 +10,9 @@ venv/
 .ruff_cache/
 .basedpyright/
 
+# ADK runtime (session store created by `adk web` / `adk run` / `adk api_server`)
+.adk/
+
 # Env / secrets
 .env
 .env.local

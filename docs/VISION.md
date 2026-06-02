@@ -98,14 +98,14 @@ after first run to see ground truth.
 2. **Don't control scopes from the client.** The DCR `scope` field is ignored; the server's hardcoded set is what shows on consent. Users pick **products**, not individual scopes.
 3. **Don't depend on `/.well-known/oauth-protected-resource`.** Atlassian returns 404 (RFC 9728 not implemented); the SDK falls back to RFC 8414 (`/.well-known/oauth-authorization-server`). Keep that fallback.
 4. **Don't hardcode the cloudId.** Call `getAccessibleAtlassianResources` when needed and pass `cloudId` explicitly.
-5. **Assume access-token TTL ~1 hour.** No refresh token is granted; on 401, re-auth — don't loop-retry refresh.
+5. **Access-token TTL ~1 hour; a refresh token IS issued.** The Phase 1 live run returned a refresh token (despite no `offline_access` in the granted scope set; server default — see `docs/phase-1-results.md`), so the MCP SDK refreshes access tokens automatically with no browser prompt. On a *persistent* 401 (refresh token expired or the grant revoked), trigger full interactive re-auth — never loop-retry.
 6. **Set generous timeouts (≥300s) on the first request** — it includes a human-in-the-loop browser dance.
 7. **Never log tokens.** Redact `Authorization`; the granted `scope` field IS safe to log.
 8. **The first user to consent must have access to every product the MCP server requests scopes for.**
 9. **Use an `*.onmicrosoft.com` (or verified business) domain** for the Atlassian org email.
 10. **Treat MCP tool schemas as aspirational.** `search`/`fetch` claim `cloudId` is optional but the runtime requires it. Always pass `cloudId`.
 11. **Assume Rovo Search indexing lag.** Fall back to JQL/CQL for content created in the last hour.
-12. **Log the granted `OAuthToken.scope` on first persist.** Ground-truth Phase-0 scopes: Jira `read:jira-work`, `write:jira-work`; Confluence `read:comment:confluence`, `read:confluence-user`, `read:page:confluence`, `read:space:confluence`, `search:confluence`, `write:comment:confluence`, `write:page:confluence`. **No `offline_access`** → no refresh token.
+12. **Log the granted `OAuthToken.scope` on first persist.** Ground-truth Phase-0 scopes: Jira `read:jira-work`, `write:jira-work`; Confluence `read:comment:confluence`, `read:confluence-user`, `read:page:confluence`, `read:space:confluence`, `search:confluence`, `write:comment:confluence`, `write:page:confluence`. **No `offline_access`** in the granted scope set — yet a **refresh token was still issued** in the Phase 1 live run (server default; see `docs/phase-1-results.md`), so access tokens refresh without re-consent.
 
 ---
 

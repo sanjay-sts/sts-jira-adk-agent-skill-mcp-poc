@@ -31,7 +31,7 @@ Legend: ✅ decided · ⏳ pending architect · 🔒 VISION-locked (no choice)
 |---|---|---|---|
 | DEC-8 | OAuth client | 🔒 | MCP SDK `OAuthClientProvider` via `httpx_client_factory` |
 | DEC-9 | Phase-1 token storage | 🔒 | File-based `~/.atlassian-mcp/` (`token.json`,`client.json`, 0600/POSIX) |
-| DEC-10 | 401 / expiry handling | 🔒 | Full re-auth, no refresh (Atlassian grants no `offline_access`) |
+| DEC-10 | 401 / expiry handling | 🔒 | Full re-auth, no refresh (Atlassian grants no `offline_access`) — **superseded 2026-06-01; see Post-Phase-1 additions** |
 | DEC-11 | Tool filter | 🔒 | 8 read-only tools (Phase-0 validated) |
 | DEC-12 | SKILL injection | ✅ | Inline into agent instruction (`_load_skill`) |
 | DEC-13 | Phase-1 tests | ✅ | `FileTokenStorage` round-trip unit test only |
@@ -52,6 +52,14 @@ Legend: ✅ decided · ⏳ pending architect · 🔒 VISION-locked (no choice)
 - Agent `name="atlassian_mcp_agent"`; Python `>=3.11`.
 
 ---
+
+## Post-Phase-1 additions (2026-06-01)
+
+| # | Decision | Status | Choice | Why |
+|---|---|---|---|---|
+| DEC-17 | Prompt caching (Bedrock/LiteLLM path) | ✅ | Cache the static prefix (8 tool schemas + the SKILL.md system prompt) via LiteLLM `cache_control_injection_points=[{"location":"message","role":"system"}]`. Bedrock chains tools→system, so one `system` checkpoint covers both. Fallback (`ATLASSIAN_CACHE_FALLBACK=1`): a `LiteLLMClient` subclass that injects `cache_control` directly. | ADK has no native cache_control for LiteLLM (adk-python#994 open) and ADK's built-in Context Caching is Gemini-only — neither helps the Bedrock/Claude path. The static prefix is re-billed at full price on every model call in the agentic loop (the dominant repeated cost). Sonnet 4.6: 1,024-token min (prefix clears it), 5-minute TTL only (so no `ttl` is set). Verified the kwarg flows through ADK 2.1.0's `LiteLlm._additional_args` → `acompletion`; hit rate observed via an `after_model_callback` logging `cached_content_token_count`. |
+
+**Refresh-token correction (supersedes DEC-10).** The Phase 1 live run returned a refresh token despite no `offline_access` in the granted scope set (server default; see `docs/phase-1-results.md`). The MCP SDK now auto-refreshes access tokens; full interactive re-auth is needed only on a *persistent* 401 (refresh expired or grant revoked). `agent.py`, `SKILL.md`, `README.md`, and `VISION.md` §5 updated to match.
 
 ## Net changes vs. the reference repo
 1. Model ID → `bedrock/us.anthropic.claude-sonnet-4-6` (was an invalid ID).
