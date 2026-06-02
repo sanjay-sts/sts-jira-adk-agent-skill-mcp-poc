@@ -13,7 +13,7 @@ description: |
 
 This skill encodes how to use the 30 tools exposed by `https://mcp.atlassian.com/v1/mcp` correctly and efficiently. Follow the decision rules in order; they're written to minimize total tool calls.
 
-> Phase 1 of this agent enables a read-only subset (8 tools): `atlassianUserInfo`, `getAccessibleAtlassianResources`, `search`, `fetch`, `searchJiraIssuesUsingJql`, `searchConfluenceUsingCql`, `getJiraIssue`, `getConfluencePage`. The write patterns below are documented for completeness but those tools are not loaded yet.
+> This agent loads read **and** write tools for Jira + Confluence. **Read (8):** `atlassianUserInfo`, `getAccessibleAtlassianResources`, `search`, `fetch`, `searchJiraIssuesUsingJql`, `searchConfluenceUsingCql`, `getJiraIssue`, `getConfluencePage` — plus the write-workflow helpers `getTransitionsForJiraIssue`, `getIssueLinkTypes`, `getConfluenceSpaces`. **Write (create/update):** `createJiraIssue`, `editJiraIssue`, `addCommentToJiraIssue`, `transitionJiraIssue`, `addWorklogToJiraIssue`, `createIssueLink`, `createConfluencePage`, `updateConfluencePage`, `createConfluenceFooterComment`, `createConfluenceInlineComment`. **Always read-before-write and confirm the target before mutating** (decision rule 8, pitfall 7). `transitionJiraIssue` can fail on Scrum boards whose transition screen includes the Sprint field — `write:sprint:jira-software` isn't granted (pitfall 2). Other inventory tools (e.g. `getVisibleJiraProjects`, `getJiraProjectIssueTypesMetadata`, `getJiraIssueTypeMetaWithFields`, `lookupJiraAccountId`, `getConfluencePageDescendants`) aren't loaded yet — add them if a create flow needs richer metadata.
 
 ## Decision rules (apply in order)
 

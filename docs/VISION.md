@@ -111,7 +111,7 @@ after first run to see ground truth.
 
 ## 6. Out of scope (for now)
 
-- **Write operations** (`editJiraIssue`, `addCommentToJiraIssue`, …) — read-only until the auth path is rock-solid.
+- ~~**Write operations**~~ — **enabled 2026-06-01 (DEC-18).** The auth path proved solid in the Phase 1 live run, so Jira/Confluence create + update tools are now loaded (server-controlled scopes already grant `write:jira-work` / `write:page:confluence` / `write:comment:confluence`). The agent is instructed to read-before-write and confirm before mutating.
 - **JSM tools** — reachable only via **API-token auth** (a separate, non-delegated connection: personal token via `Authorization: Basic base64(email:token)` or service-account key via `Bearer`). That path is **not** bound to a cloudId, isn't restricted by domain allowlists, and exposes a reduced tool set. It's the documented route for headless/service and JSM scenarios — revisit post-Phase-1.
 - **Multi-user** (Phase 2), **Entra federation** (Phase 3), **Guard/SAML/SCIM** (Phase 4).
 - **Production deployment**, **LangGraph orchestration**, **per-user rate limiting**.

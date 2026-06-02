@@ -67,8 +67,13 @@ OAUTH_REDIRECT_URI = f"http://127.0.0.1:{OAUTH_CALLBACK_PORT}/callback"
 # Generous timeout: the first request includes a human-in-the-loop browser dance.
 FIRST_REQUEST_TIMEOUT_S = 300.0
 
-# Phase 1: read-only Jira + Confluence (DEC-14). Exactly the Phase-0-validated set.
+# Read + write Jira + Confluence (DEC-14 read set + DEC-18 write set). The server-controlled
+# scopes already grant write:jira-work / write:page:confluence / write:comment:confluence, so
+# these mutating tools work with the existing token — no new consent. Caveat:
+# write:sprint:jira-software is NOT granted, so transitionJiraIssue can fail on Scrum boards
+# whose transition screen includes the Sprint field (SKILL.md pitfall 2).
 PHASE_1_TOOL_FILTER = [
+    # ── Read ──
     # Identity & discovery
     "atlassianUserInfo",
     "getAccessibleAtlassianResources",
@@ -81,6 +86,23 @@ PHASE_1_TOOL_FILTER = [
     # Direct fetch by known id
     "getJiraIssue",
     "getConfluencePage",
+    # Read-helpers the write workflows depend on
+    "getTransitionsForJiraIssue",  # required before transitionJiraIssue
+    "getIssueLinkTypes",  # required before createIssueLink
+    "getConfluenceSpaces",  # to resolve spaceId before createConfluencePage
+    # ── Write (create / update) ──
+    # Jira
+    "createJiraIssue",
+    "editJiraIssue",
+    "addCommentToJiraIssue",
+    "transitionJiraIssue",
+    "addWorklogToJiraIssue",
+    "createIssueLink",
+    # Confluence
+    "createConfluencePage",
+    "updateConfluencePage",
+    "createConfluenceFooterComment",
+    "createConfluenceInlineComment",
 ]
 
 
@@ -241,6 +263,12 @@ Follow the operational guide below when choosing tools. Prefer the `search`
 tool for natural-language questions; fall back to JQL/CQL only when the user
 uses precise query language, asks for specific filters, or when the content
 in question was created in the last hour (Rovo Search has indexing lag).
+
+You can create and update content too — create/edit Jira issues, comment, transition
+issues, log work, link issues, and create/update Confluence pages and comments. Before
+any write: read the target first to confirm it's the right item, state what you're about
+to change, and proceed only on a clear instruction — never mutate on a vague reference.
+After a successful write, report the issue key / page title and a link.
 
 Access tokens are short-lived (~1 hour). A refresh token is normally issued, so the
 OAuth client refreshes the access token automatically — no browser prompt needed. If a
