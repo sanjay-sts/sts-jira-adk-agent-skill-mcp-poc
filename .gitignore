@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.basedpyright/
+
+# ADK runtime (session store created by `adk web` / `adk run` / `adk api_server`)
+.adk/
+
+# Env / secrets
+.env
+.env.local
+
+# NOTE: the OAuth token cache lives OUTSIDE the repo at ~/.atlassian-mcp/{client.json,token.json}
+# (0600 on POSIX). It is never written into the working tree, so nothing to ignore here —
+# this line is just a reminder not to relocate it into the repo.
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kept intentionally (DEC-16): reference_data/ and scratchpad/ ARE committed.

@@ -1,0 +1,37 @@
+[project]
+name = "adk-atlassian-mcp"
+version = "0.1.0"
+description = "Single-user ADK agent calling the Atlassian Rovo Remote MCP Server via OAuth 2.1 + DCR + PKCE. Bedrock Claude Sonnet 4.6 via LiteLLM."
+requires-python = ">=3.11"
+readme = "README.md"
+
+dependencies = [
+    "google-adk[litellm]>=2.0",
+    "mcp>=1.6",
+    "httpx>=0.27",
+    "boto3>=1.34",
+]
+
+[project.optional-dependencies]
+dev = [
+    "basedpyright>=1.13",
+    "ruff>=0.6",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
+include = ["atlassian_mcp_test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
