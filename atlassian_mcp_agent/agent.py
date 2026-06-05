@@ -367,6 +367,12 @@ def _log_token_usage(
     return None
 
 
+# Public aliases reused by the Phase 2 forwarding module (atlassian_mcp_agent.forwarding),
+# which shares the instruction, the static-prefix model, and the token-usage callback.
+AGENT_INSTRUCTION = _AGENT_INSTRUCTION
+log_token_usage = _log_token_usage
+
+
 root_agent = Agent(
     model=model,
     name="atlassian_mcp_agent",

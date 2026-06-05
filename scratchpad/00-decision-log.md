@@ -74,3 +74,23 @@ Legend: ✅ decided · ⏳ pending architect · 🔒 VISION-locked (no choice)
 ⏳ **Architect to confirm this log**, then implementation proceeds per the task list.
 Runtime-only open items (not blockers) remain in `05`: server_url discovery shape, auto-reauth
 on expiry, Windows 0600 no-op, Rovo indexing-lag SLO, revoked-grant behavior.
+
+---
+
+## Phase 2 — Multi-user, no cross-talk (2026-06-04)
+
+Full design: `docs/phase-2-design.md`.
+
+| # | Decision | Status | Choice | Why |
+|---|---|---|---|---|
+| DEC-19 | Phase 2 multi-user model | ✅ | **Stateless bearer forwarding**, not a server-side keyed token store. The agent runs as a remote service (ECS Fargate + ALB, autoscaled); the **client does all OAuth** (DCR+PKCE+consent) and forwards a valid Atlassian access token on **every** request. The agent stores **no** credential — bearer lives only in a **request-scoped `contextvars.ContextVar`**. Injection uses ADK 2.1's native **`McpToolset(header_provider=…)`** (called per tool call; verified `mcp_tool.py:386-396`), with `MCPSessionManager` **pooling sessions by a hash of the headers** (`_generate_session_key:289`) → a **distinct MCP session per bearer**, so A's call can never reach B's session. `OAuthClientProvider` / `FileTokenStorage` / DCR / loopback callback are **removed from the agent**. | Hard security constraint: no cred at rest in the agent. **Supersedes VISION §2 / DEC-10's keyed-store plan** (which assumed server-side storage). Surface-1 isolation is structural in ADK (header-keyed sessions) + enforced downstream by Atlassian per-token; the agent's only job is **non-crossing + non-persistence**. Source-verified against google-adk 2.1.0 / mcp 1.27.1 (Task 2). |
+| DEC-20 | Two isolation surfaces | ✅ | **S1 (creds/data):** prevented structurally by the per-request contextvar bearer + Atlassian per-token enforcement. **S2 (conversation history):** prevented by ADK `(user_id, session_id)` session keying **+ a token↔user binding check** (bind `conversation_id→accountId` on creation; reject a turn whose bearer resolves to a different accountId = anti-hijack). IDs (`user_id`, `conversation_id`, token-fingerprint-hash) are **validation + audit, not prevention**. | Turning on multi-conversation routing creates S2, which Atlassian does **not** protect — a client presenting a valid token but claiming another user's `conversation_id` could pull that history unless the binding is checked. The IDs exist to protect S2 and to audit S1. |
+| DEC-21 | Test strategy | ✅ | A2A is the **last** thing added (L4); cross-talk lives below it. Prove the property with a **scripted concurrency harness** (ground-truth `bearer→accountId→resource`, probes `atlassianUserInfo` + a permission-scoped read) covering concurrent-multi-user, multi-conversation-per-user, sequential-residual, and hijack-rejection. 3 machines / 3 **unequal-permission** users are the realism/demo layer, not the verdict. Model: **Haiku** via `BEDROCK_MODEL_ID`; assert on tool output, not prose. | Cross-talk is a race; humans can't generate the overlap/volume. The current code fails the *sequential-residual* case by construction (one global `token.json`). |
+
+**Gating unknown (spike first):** does the Atlassian MCP server honor a per-request bearer on a
+shared session, or bind the session to the first user? Decides shared-toolset-with-per-request-auth
+vs per-request ephemeral MCP session. Until answered, default to per-request sessions.
+
+**Removed from the agent in Phase 2:** `OAuthClientProvider`, `FileTokenStorage`, the loopback
+OAuth callback server, and the module-global `oauth`/`toolset` singletons — all moved client-side
+or replaced by the per-request contextvar path.
