@@ -13,6 +13,7 @@ import pytest
 from atlassian_mcp_agent import identity
 from atlassian_mcp_agent.identity import (
     BindingMismatch,
+    IdentityError,
     check_binding,
     fingerprint,
     resolve_account_id,
@@ -80,6 +81,30 @@ async def test_distinct_tokens_get_distinct_identities() -> None:
     (_fa, a), (_fb, b) = await resolve_account_id("tok-A"), await resolve_account_id("tok-B")
     assert a == "acct-for-tok-A"
     assert b == "acct-for-tok-B"
+
+
+@pytest.mark.asyncio
+async def test_failed_resolution_is_not_cached_and_retries() -> None:
+    """A resolution failure must clear the in-flight slot and not poison the cache."""
+    attempts = 0
+
+    async def flaky_resolve(token: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise IdentityError("boom")
+        return "acct-eventually"
+
+    identity._resolve_via_mcp = flaky_resolve  # type: ignore[assignment]
+
+    with pytest.raises(IdentityError):
+        await resolve_account_id("tok-X")
+    assert not identity._cache  # failure not cached
+    assert not identity._inflight  # in-flight slot cleared
+
+    _fp, acct = await resolve_account_id("tok-X")  # retry succeeds
+    assert acct == "acct-eventually"
+    assert attempts == 2
 
 
 @pytest.mark.asyncio

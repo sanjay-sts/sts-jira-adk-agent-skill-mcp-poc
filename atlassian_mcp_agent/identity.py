@@ -146,7 +146,7 @@ async def resolve_account_id(token: str) -> tuple[str, str]:
         account_id = await inflight
     finally:
         async with _lock:
-            if _inflight.get(key) is inflight:  # only the originator clears it
+            if _inflight.get(key) is inflight:  # first awaiter to finish clears it (once)
                 del _inflight[key]
 
     async with _lock:
