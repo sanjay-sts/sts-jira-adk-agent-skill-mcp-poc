@@ -24,7 +24,6 @@ Run (on each user's machine):
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import pathlib
@@ -40,6 +39,7 @@ from pydantic import BaseModel
 
 # Reuse Phase 1's configured OAuth provider + endpoint as the LOCAL token-minter.
 from atlassian_mcp_agent.agent import ATLASSIAN_MCP_URL, oauth
+from atlassian_mcp_agent.identity import account_id_from_result
 from atlassian_mcp_agent.storage import FileTokenStorage
 
 logger = logging.getLogger("atlassian_mcp_agent.client")
@@ -69,14 +69,8 @@ class SendResponse(BaseModel):
 
 
 def _identity(call_result: CallToolResult) -> str:
-    """Extract the Atlassian accountId (fallback: email/name) from an atlassianUserInfo result."""
-    parts = [getattr(b, "text", "") or "" for b in call_result.content]
-    blob = "\n".join(p for p in parts if p)
-    try:
-        data = json.loads(blob)
-        return data.get("account_id") or data.get("accountId") or data.get("email") or "unknown"
-    except (json.JSONDecodeError, AttributeError):
-        return "unknown"
+    """This user's Atlassian accountId from an atlassianUserInfo result ('unknown' if absent)."""
+    return account_id_from_result(call_result) or "unknown"
 
 
 async def _mint_token_and_identity() -> tuple[str, str]:

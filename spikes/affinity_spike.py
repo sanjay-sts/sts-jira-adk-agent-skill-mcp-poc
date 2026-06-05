@@ -39,13 +39,15 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import json
 import os
 import sys
 
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CallToolResult
+
+from atlassian_mcp_agent.identity import account_id_from_result
 
 ATLASSIAN_MCP_URL = "https://mcp.atlassian.com/v1/mcp"
 
@@ -74,28 +76,13 @@ def _mcp_client() -> httpx.AsyncClient:
     )
 
 
-def _identity(call_result) -> str:
-    """Best-effort extract a stable identity string from an atlassianUserInfo result."""
-    try:
-        parts = []
-        for block in call_result.content:
-            text = getattr(block, "text", None)
-            if text:
-                parts.append(text)
-        blob = "\n".join(parts)
-        try:
-            data = json.loads(blob)
-            return (
-                data.get("account_id")
-                or data.get("accountId")
-                or data.get("email")
-                or data.get("name")
-                or blob[:200]
-            )
-        except json.JSONDecodeError:
-            return blob[:200]
-    except Exception as e:
-        return f"<unparseable: {e!r}>"
+def _identity(call_result: CallToolResult) -> str:
+    """Identity string for spike output: the canonical accountId, else a short debug blob."""
+    acct = account_id_from_result(call_result)
+    if acct:
+        return acct
+    parts = [getattr(b, "text", "") or "" for b in call_result.content]
+    return ("\n".join(p for p in parts if p))[:200] or "<no-identity>"
 
 
 async def whoami(session: ClientSession) -> str:

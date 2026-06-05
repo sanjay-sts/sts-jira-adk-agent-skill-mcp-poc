@@ -41,6 +41,10 @@ from .forwarding import bearer_scope, build_agent
 from .identity import BindingMismatch, IdentityError, check_binding, resolve_account_id
 
 logger = logging.getLogger("atlassian_mcp_agent.server")
+# Dedicated audit channel (resolved accountId + token fingerprint, never the token). Split from
+# the operational logger so ops can route/level it independently — e.g. its own CloudWatch
+# stream or a stricter level — since it carries identity (PII) the app logs don't otherwise.
+audit = logging.getLogger("atlassian_mcp_agent.audit")
 
 APP_NAME = "atlassian_mcp_agent_mt"
 
@@ -137,27 +141,37 @@ async def chat(req: ChatRequest, authorization: str | None = Header(default=None
         try:
             check_binding(session.state.get("bound_account_id"), account_id)
         except BindingMismatch as e:
-            logger.warning(
-                "audit hijack-block conv=%s fp=%s presented=%s", conversation_id, fp, account_id
+            audit.warning(
+                "hijack-block conv=%s fp=%s presented=%s", conversation_id, fp, account_id
             )
             raise HTTPException(
                 403, "Forwarded token does not match this conversation's owner"
             ) from e
 
-    logger.info(
-        "audit chat conv=%s account=%s fp=%s client_label=%s",
+    audit.info(
+        "chat conv=%s account=%s fp=%s client_label=%s",
         conversation_id, account_id, fp, req.user_id,
     )
 
     content = types.Content(role="user", parts=[types.Part(text=req.message)])
 
     final_text = ""
+    saw_final = False
     with bearer_scope(token):
         async for event in _runner.run_async(
             user_id=account_id, session_id=conversation_id, new_message=content
         ):
-            if event.is_final_response() and event.content and event.content.parts:
-                final_text = "".join(p.text or "" for p in event.content.parts)
+            if event.is_final_response():
+                saw_final = True
+                if event.content and event.content.parts:
+                    final_text = "".join(p.text or "" for p in event.content.parts)
+
+    if not final_text:
+        # Don't let an empty/absent final response disappear silently — make it observable.
+        logger.warning(
+            "empty agent response conv=%s account=%s saw_final=%s",
+            conversation_id, account_id, saw_final,
+        )
 
     return ChatResponse(user_id=account_id, conversation_id=conversation_id, response=final_text)
 
