@@ -1,0 +1,26 @@
+# Keep the build context (and image) minimal and secret-free.
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+
+# Not needed at runtime (agent runs from atlassian_mcp_agent/ only)
+tests
+spikes
+client
+docs
+scratchpad
+reference_data
+justfile
+
+# Never ship local secrets/state
+.env
+.env.*
+**/token.json
+**/client.json
+
+# Markdown isn't needed in the image except the README pyproject references
+*.md
+!README.md

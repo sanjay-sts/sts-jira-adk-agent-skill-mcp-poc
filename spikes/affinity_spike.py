@@ -45,7 +45,7 @@ import sys
 
 import httpx
 from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 ATLASSIAN_MCP_URL = "https://mcp.atlassian.com/v1/mcp"
 
@@ -108,7 +108,7 @@ async def whoami(session: ClientSession) -> str:
 async def one_session_identity(token: str, label: str) -> str:
     """Open a fresh session bound to `token` and report its identity."""
     _bearer.set(token)
-    async with streamablehttp_client(
+    async with streamable_http_client(
         ATLASSIAN_MCP_URL, httpx_client_factory=_factory
     ) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
@@ -139,7 +139,7 @@ async def _in_context(fn, *args):
 async def test2_shared_session_swap(tok_a: str, tok_b: str) -> str:
     print("\nTEST 2 — ONE shared session, swap bearer A->B between calls:")
     _bearer.set(tok_a)
-    async with streamablehttp_client(
+    async with streamable_http_client(
         ATLASSIAN_MCP_URL, httpx_client_factory=_factory
     ) as (read, write, get_session_id):
         async with ClientSession(read, write) as session:

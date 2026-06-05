@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlassian Agent — local client</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 1.5rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.1rem; }
+    #meta { color: #888; font-size: .85rem; margin-bottom: 1rem; }
+    #log { display: flex; flex-direction: column; gap: .6rem; margin-bottom: 1rem; }
+    .msg { padding: .55rem .8rem; border-radius: .6rem; white-space: pre-wrap; line-height: 1.4; }
+    .user { align-self: flex-end; background: #2563eb; color: #fff; max-width: 80%; }
+    .agent { align-self: flex-start; background: #e5e7eb; color: #111; max-width: 80%; }
+    .err { align-self: stretch; background: #fee2e2; color: #991b1b; font-size: .85rem; }
+    form { display: flex; gap: .5rem; }
+    input { flex: 1; padding: .6rem; border: 1px solid #9994; border-radius: .5rem; font-size: 1rem; }
+    button { padding: .6rem 1rem; border: 0; border-radius: .5rem; background: #2563eb; color: #fff; font-size: 1rem; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+  </style>
+</head>
+<body>
+  <h1>Atlassian Agent — local client</h1>
+  <div id="meta">conversation: <span id="conv">(new)</span> · identity resolves on first message</div>
+  <div id="log"></div>
+  <form id="f">
+    <input id="i" autocomplete="off" placeholder="Ask about your Jira / Confluence…" autofocus />
+    <button id="b" type="submit">Send</button>
+  </form>
+
+  <script>
+    // One conversation per page load; the server keys ADK history by (user_id, conversation_id).
+    let conversationId = crypto.randomUUID().replace(/-/g, "");
+    document.getElementById("conv").textContent = conversationId.slice(0, 8) + "…";
+
+    const log = document.getElementById("log");
+    const form = document.getElementById("f");
+    const input = document.getElementById("i");
+    const btn = document.getElementById("b");
+
+    function bubble(text, cls) {
+      const d = document.createElement("div");
+      d.className = "msg " + cls;
+      d.textContent = text;
+      log.appendChild(d);
+      d.scrollIntoView({ behavior: "smooth", block: "end" });
+      return d;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = "";
+      btn.disabled = true;
+      bubble(message, "user");
+      const thinking = bubble("…", "agent");
+      try {
+        const r = await fetch("/send", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message, conversation_id: conversationId }),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status + ": " + (await r.text()));
+        const data = await r.json();
+        conversationId = data.conversation_id || conversationId;
+        document.getElementById("meta").firstChild.textContent = "you: " + data.user_id + " · conversation: ";
+        thinking.textContent = data.response || "(empty response)";
+      } catch (err) {
+        thinking.remove();
+        bubble(String(err), "err");
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>

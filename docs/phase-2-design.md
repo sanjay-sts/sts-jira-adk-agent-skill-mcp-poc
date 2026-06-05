@@ -162,6 +162,32 @@ Bedrock cross-region inference-profile id for Haiku 4.5 before trusting it (Phas
 by a bad model id — DEC-1). Assert on **tool output**, not model prose (Haiku may flub
 narration).
 
+## 8a. How to run it locally
+
+Three moving parts: the **agent** (credential-free, containerizable), the **client** (one per
+user/machine — owns OAuth, runs on the host), and the **harness/spike** (programmatic tests).
+
+**Agent** (this box needs Bedrock creds):
+```bash
+aws sso login --profile <p>
+# bare:
+uv run uvicorn atlassian_mcp_agent.server:app --host 0.0.0.0 --port 8080   # or: just serve
+# containerized (single task; the right unit for the 4-users-one-task cross-talk test):
+AWS_PROFILE=<p> docker compose up --build
+```
+
+**Client** (on each user's machine — owns OAuth, forwards the bearer):
+```bash
+export REMOTE_AGENT_URL=http://<agent-host>:8080
+export CLIENT_USER_ID=alice            # optional; default = the Atlassian accountId
+uv run uvicorn client.app:app --port 9090
+# open http://127.0.0.1:9090 — first message triggers the Atlassian consent dance
+```
+The token is minted/refreshed locally (reusing Phase 1's OAuth) and only rests on that
+machine; the agent stays credential-free.
+
+**Affinity spike** (two real tokens): `ATLAS_TOKEN_A=… ATLAS_TOKEN_B=… just spike`.
+
 ## 9. Out of scope (Phase 2)
 
 - A2A protocol surface (AgentCard, `auth-required` task lifecycle) — designed for, added last (L4).
