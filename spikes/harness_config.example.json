@@ -1,0 +1,15 @@
+{
+  "agent_url": "http://127.0.0.1:8080",
+  "users": [
+    {
+      "label": "alice",
+      "token": "<alice's Atlassian access token (~1h TTL)>",
+      "account_id": "<alice's Atlassian accountId, e.g. 557058:abc-...>"
+    },
+    {
+      "label": "bob",
+      "token": "<bob's Atlassian access token — a DIFFERENT user>",
+      "account_id": "<bob's Atlassian accountId>"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# Local Phase 2 testing for cross-talk.
+#
+# The AGENT runs here in a container — credential-free; it forwards a per-request bearer to
+# Atlassian MCP and never stores a token. The web-UI CLIENTS run on the HOST machines (they
+# own OAuth + need a browser), NOT in containers; point each client's REMOTE_AGENT_URL at this
+# agent (http://<this-host>:8080).
+#
+# The cross-talk property that matters is WITHIN one container (e.g. 4 users sharing one task),
+# so a single agent container driven by many concurrent requests with different bearers is the
+# right test unit. Bedrock creds: run `aws sso login --profile <p>` on the host first.
+#
+#   AWS_PROFILE=mainadmin docker compose up --build
+services:
+  agent:
+    build: .
+    image: atlassian-mcp-agent:phase2
+    ports:
+      - "8080:8080"
+    environment:
+      # Sonnet by default; set the Haiku 4.5 inference-profile id for cheap concurrent load tests.
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-bedrock/us.anthropic.claude-sonnet-4-6}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_PROFILE: ${AWS_PROFILE:-default}
+    volumes:
+      # Local Bedrock creds (read-only). Requires an active `aws sso login` on the host.
+      - ${HOME}/.aws:/home/app/.aws:ro
+    restart: unless-stopped
+    # Single uvicorn worker (default): InMemorySessionService is per-process until the shared
+    # session store lands (Task 6). The forwarded bearer is isolated per asyncio request, so one
+    # worker safely serves many concurrent users.

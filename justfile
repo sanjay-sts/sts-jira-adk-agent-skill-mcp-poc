@@ -21,6 +21,18 @@ run:
 api:
     uv run adk api_server
 
+# Phase 2: multi-user forwarding server (POST /chat with Authorization: Bearer <atlassian token>)
+serve port="8080":
+    uv run uvicorn atlassian_mcp_agent.server:app --host 127.0.0.1 --port {{port}}
+
+# Phase 2: Level-0 affinity spike (needs ATLAS_TOKEN_A / ATLAS_TOKEN_B for two different users)
+spike:
+    uv run python spikes/affinity_spike.py
+
+# Phase 2: isolation harness — concurrent/sequential/hijack/history (needs spikes/harness_config.json + a running agent)
+harness:
+    uv run python spikes/isolation_harness.py
+
 # Unit tests
 test:
     uv run pytest
