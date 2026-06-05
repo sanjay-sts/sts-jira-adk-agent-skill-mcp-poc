@@ -26,3 +26,8 @@ venv/
 Thumbs.db
 
 # Kept intentionally (DEC-16): reference_data/ and scratchpad/ ARE committed.
+
+# Phase 2 harness secrets / local session db
+spikes/harness_config.json
+*.db
+sessions.db

@@ -65,12 +65,10 @@ class ForwardedBearerAuth(httpx.Auth):
         yield request
 
 
-def _factory(headers=None, timeout=None, auth=None) -> httpx.AsyncClient:
-    # Discard any incoming auth; substitute our contextvar-reading hook (mirrors agent wiring).
-    del auth
+def _mcp_client() -> httpx.AsyncClient:
+    # httpx client whose auth reads the per-request bearer from the contextvar at send time.
     return httpx.AsyncClient(
-        headers=headers,
-        timeout=timeout or httpx.Timeout(60.0),
+        timeout=httpx.Timeout(60.0),
         auth=ForwardedBearerAuth(),
         follow_redirects=True,
     )
@@ -108,8 +106,9 @@ async def whoami(session: ClientSession) -> str:
 async def one_session_identity(token: str, label: str) -> str:
     """Open a fresh session bound to `token` and report its identity."""
     _bearer.set(token)
-    async with streamable_http_client(
-        ATLASSIAN_MCP_URL, httpx_client_factory=_factory
+    http = _mcp_client()
+    async with http, streamable_http_client(
+        ATLASSIAN_MCP_URL, http_client=http
     ) as (read, write, _get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -139,8 +138,9 @@ async def _in_context(fn, *args):
 async def test2_shared_session_swap(tok_a: str, tok_b: str) -> str:
     print("\nTEST 2 — ONE shared session, swap bearer A->B between calls:")
     _bearer.set(tok_a)
-    async with streamable_http_client(
-        ATLASSIAN_MCP_URL, httpx_client_factory=_factory
+    http = _mcp_client()
+    async with http, streamable_http_client(
+        ATLASSIAN_MCP_URL, http_client=http
     ) as (read, write, get_session_id):
         async with ClientSession(read, write) as session:
             await session.initialize()

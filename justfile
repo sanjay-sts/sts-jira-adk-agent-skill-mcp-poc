@@ -29,6 +29,10 @@ serve port="8080":
 spike:
     uv run python spikes/affinity_spike.py
 
+# Phase 2: isolation harness — concurrent/sequential/hijack/history (needs spikes/harness_config.json + a running agent)
+harness:
+    uv run python spikes/isolation_harness.py
+
 # Unit tests
 test:
     uv run pytest

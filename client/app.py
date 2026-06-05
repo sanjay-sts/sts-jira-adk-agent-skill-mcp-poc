@@ -86,10 +86,19 @@ async def _mint_token_and_identity() -> tuple[str, str]:
     (and a silent refresh thereafter), populating ~/.atlassian-mcp/token.json. We then read the
     access token back and resolve the accountId from atlassianUserInfo.
     """
-    async with streamable_http_client(ATLASSIAN_MCP_URL, auth=oauth) as (read, write, _sid):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            info = await session.call_tool("atlassianUserInfo", {})
+    # New mcp client API: pass a pre-built httpx client; `oauth` (Phase-1 provider) is its auth.
+    oauth_client = httpx.AsyncClient(
+        auth=oauth, timeout=httpx.Timeout(300.0), follow_redirects=True
+    )
+    async with oauth_client:
+        async with streamable_http_client(ATLASSIAN_MCP_URL, http_client=oauth_client) as (
+            read,
+            write,
+            _sid,
+        ):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                info = await session.call_tool("atlassianUserInfo", {})
     tokens = await _storage.get_tokens()
     if tokens is None or not tokens.access_token:
         raise RuntimeError("OAuth completed but no access token was stored.")
